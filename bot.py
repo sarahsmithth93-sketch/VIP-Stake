@@ -14,7 +14,6 @@ from aiohttp import web
 # ---------- CONFIG ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")   # https://your-app.up.railway.app
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 PORT = int(os.getenv("PORT", 8080))
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
@@ -39,12 +38,7 @@ def q(sql, args=(), fetch=None):
     cur = conn.cursor()
     cur.execute(sql, args)
     conn.commit()
-    if fetch == "one":
-        r = cur.fetchone()
-    elif fetch == "all":
-        r = cur.fetchall()
-    else:
-        r = None
+    r = cur.fetchone() if fetch == "one" else cur.fetchall() if fetch == "all" else None
     conn.close()
     return r
 
@@ -56,9 +50,6 @@ def create_user(uid, uname, fname, ref=None):
       (uid, uname, fname, ref, datetime.utcnow().isoformat()))
     if ref:
         q("UPDATE users SET referrals=referrals+1, balance=balance+100 WHERE user_id=?", (ref,))
-
-def add_balance(uid, delta):
-    q("UPDATE users SET balance=balance+? WHERE user_id=?", (delta, uid))
 
 def create_stake(uid, amount, plan, apy, days):
     now = datetime.utcnow()
@@ -225,21 +216,6 @@ async def bal_cmd(m: Message):
 @dp.message(Command("stake"))
 async def stake_cmd(m: Message):
     await m.answer("📊 Choose a plan:", reply_markup=plans_kb())
-
-@dp.message(Command("broadcast"))
-async def bc(m: Message, bot: Bot):
-    if m.from_user.id not in ADMIN_IDS: return
-    parts = m.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await m.answer("Usage: /broadcast <text>"); return
-    users = q("SELECT user_id FROM users", fetch="all")
-    sent = 0
-    for (uid,) in users:
-        try:
-            await bot.send_message(uid, parts[1]); sent += 1
-            await asyncio.sleep(0.05)
-        except Exception: pass
-    await m.answer(f"✅ Sent to {sent}/{len(users)}")
 
 # ---------- STARTUP ----------
 async def on_startup(bot: Bot):

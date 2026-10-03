@@ -8,20 +8,11 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand,
 )
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
 
-# ---------- CONFIG ----------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")   # https://your-app.up.railway.app
-PORT = int(os.getenv("PORT", 8080))
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 DB = "bot.db"
-
 logging.basicConfig(level=logging.INFO)
 
-# ---------- DATABASE ----------
 def init_db():
     c = sqlite3.connect(DB).cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS users(
@@ -34,27 +25,22 @@ def init_db():
     c.connection.commit()
 
 def q(sql, args=(), fetch=None):
-    conn = sqlite3.connect(DB)
-    cur = conn.cursor()
-    cur.execute(sql, args)
-    conn.commit()
-    r = cur.fetchone() if fetch == "one" else cur.fetchall() if fetch == "all" else None
-    conn.close()
-    return r
+    conn = sqlite3.connect(DB); cur = conn.cursor()
+    cur.execute(sql, args); conn.commit()
+    r = cur.fetchone() if fetch=="one" else cur.fetchall() if fetch=="all" else None
+    conn.close(); return r
 
-def get_user(uid):
-    return q("SELECT * FROM users WHERE user_id=?", (uid,), "one")
+def get_user(uid): return q("SELECT * FROM users WHERE user_id=?", (uid,), "one")
 
 def create_user(uid, uname, fname, ref=None):
     q("INSERT OR IGNORE INTO users(user_id,username,first_name,referred_by,joined_at) VALUES(?,?,?,?,?)",
       (uid, uname, fname, ref, datetime.utcnow().isoformat()))
-    if ref:
-        q("UPDATE users SET referrals=referrals+1, balance=balance+100 WHERE user_id=?", (ref,))
+    if ref: q("UPDATE users SET referrals=referrals+1, balance=balance+100 WHERE user_id=?", (ref,))
 
 def create_stake(uid, amount, plan, apy, days):
     now = datetime.utcnow()
     q("INSERT INTO stakes(user_id,amount,plan,apy,start_ts,unlock_ts) VALUES(?,?,?,?,?,?)",
-      (uid, amount, plan, apy, now.isoformat(), (now + timedelta(days=days)).isoformat()))
+      (uid, amount, plan, apy, now.isoformat(), (now+timedelta(days=days)).isoformat()))
     q("UPDATE users SET balance=balance-?, staked=staked+? WHERE user_id=?", (amount, amount, uid))
 
 def active_stakes(uid):
@@ -65,12 +51,11 @@ def claim_stake(sid, uid):
     if not row: return None
     amount, apy, unlock = row
     if datetime.fromisoformat(unlock) > datetime.utcnow(): return "locked"
-    total = amount * (1 + apy / 100)
+    total = amount*(1+apy/100)
     q("UPDATE stakes SET active=0 WHERE id=?", (sid,))
     q("UPDATE users SET balance=balance+?, staked=staked-? WHERE user_id=?", (total, amount, uid))
     return total
 
-# ---------- KEYBOARDS ----------
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Balance", callback_data="balance"),
@@ -88,17 +73,12 @@ def plans_kb():
         [InlineKeyboardButton(text="🔙 Back", callback_data="menu")],
     ])
 
-PLANS = {
-    "bronze": ("Bronze", 5.0, 30, 100),
-    "silver": ("Silver", 12.0, 60, 500),
-    "gold":   ("Gold",   25.0, 90, 1000),
-}
+PLANS = {"bronze":("Bronze",5.0,30,100), "silver":("Silver",12.0,60,500), "gold":("Gold",25.0,90,1000)}
 
-# ---------- HANDLERS ----------
 dp = Dispatcher()
 
 @dp.message(CommandStart())
-async def start(m: Message, bot: Bot):
+async def start(m: Message):
     ref = None
     parts = m.text.split()
     if len(parts) > 1 and parts[1].startswith("ref_"):
@@ -111,56 +91,41 @@ async def start(m: Message, bot: Bot):
         "✅ 1,000 free VIP Credits to start\n"
         "✅ Earn simulated APY up to 25%\n"
         "✅ 100 credits per referral\n\n"
-        "Choose an option below:",
-        reply_markup=main_menu())
+        "Choose an option below:", reply_markup=main_menu())
 
 @dp.callback_query(F.data == "menu")
 async def cb_menu(c: CallbackQuery):
-    await c.message.edit_text("🏠 <b>Main Menu</b>", reply_markup=main_menu())
-    await c.answer()
+    await c.message.edit_text("🏠 <b>Main Menu</b>", reply_markup=main_menu()); await c.answer()
 
 @dp.callback_query(F.data == "balance")
 async def cb_balance(c: CallbackQuery):
     u = get_user(c.from_user.id)
     await c.message.edit_text(
-        f"💰 <b>Your Wallet</b>\n\n"
-        f"Balance: <b>{u[3]:.2f}</b>\n"
-        f"Staked:  <b>{u[4]:.2f}</b>\n"
-        f"Referrals: <b>{u[5]}</b>",
-        reply_markup=main_menu())
-    await c.answer()
+        f"💰 <b>Your Wallet</b>\n\nBalance: <b>{u[3]:.2f}</b>\nStaked:  <b>{u[4]:.2f}</b>\nReferrals: <b>{u[5]}</b>",
+        reply_markup=main_menu()); await c.answer()
 
 @dp.callback_query(F.data == "stake")
 async def cb_stake(c: CallbackQuery):
-    await c.message.edit_text(
-        "📊 <b>Staking Plans</b>\n\n"
-        "• Bronze — 30 days @ 5% APY\n"
-        "• Silver — 60 days @ 12% APY\n"
-        "• Gold — 90 days @ 25% APY",
-        reply_markup=plans_kb())
-    await c.answer()
+    await c.message.edit_text("📊 <b>Staking Plans</b>\n\n• Bronze — 30d @ 5%\n• Silver — 60d @ 12%\n• Gold — 90d @ 25%",
+                              reply_markup=plans_kb()); await c.answer()
 
 @dp.callback_query(F.data.startswith("plan_"))
 async def cb_plan(c: CallbackQuery):
-    key = c.data[5:]
-    name, apy, days, min_amt = PLANS[key]
+    name, apy, days, min_amt = PLANS[c.data[5:]]
     u = get_user(c.from_user.id)
     if u[3] < min_amt:
-        await c.answer(f"❌ Need {min_amt} credits. Invite friends to earn more!", show_alert=True)
-        return
+        await c.answer(f"❌ Need {min_amt} credits.", show_alert=True); return
     amount = min(u[3], min_amt)
     create_stake(c.from_user.id, amount, name, apy, days)
-    await c.message.edit_text(
-        f"✅ <b>Stake Created</b>\n\nPlan: {name}\nAmount: {amount:.2f}\nAPY: {apy}%\nDuration: {days} days",
-        reply_markup=main_menu())
+    await c.message.edit_text(f"✅ <b>Stake Created</b>\n\nPlan: {name}\nAmount: {amount:.2f}\nAPY: {apy}%\nDays: {days}",
+                              reply_markup=main_menu())
     await c.answer("Stake created!")
 
 @dp.callback_query(F.data == "my_stakes")
 async def cb_my(c: CallbackQuery):
     rows = active_stakes(c.from_user.id)
     if not rows:
-        await c.message.edit_text("📭 No active stakes.", reply_markup=main_menu())
-        await c.answer(); return
+        await c.message.edit_text("📭 No active stakes.", reply_markup=main_menu()); await c.answer(); return
     kb = []
     for sid, amount, plan, apy, unlock in rows:
         ready = "✅" if datetime.fromisoformat(unlock) <= datetime.utcnow() else "⏳"
@@ -171,13 +136,11 @@ async def cb_my(c: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("claim_"))
 async def cb_claim(c: CallbackQuery):
-    sid = int(c.data[6:])
-    r = claim_stake(sid, c.from_user.id)
+    r = claim_stake(int(c.data[6:]), c.from_user.id)
     if r is None: await c.answer("Not found.", show_alert=True)
-    elif r == "locked": await c.answer("⏳ Not unlocked yet.", show_alert=True)
+    elif r == "locked": await c.answer("⏳ Not unlocked.", show_alert=True)
     else:
-        await c.answer(f"✅ Claimed {r:.2f} credits!", show_alert=True)
-        await cb_my(c)
+        await c.answer(f"✅ Claimed {r:.2f}!", show_alert=True); await cb_my(c)
 
 @dp.callback_query(F.data == "referral")
 async def cb_ref(c: CallbackQuery, bot: Bot):
@@ -186,27 +149,20 @@ async def cb_ref(c: CallbackQuery, bot: Bot):
     u = get_user(c.from_user.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔗 Share", url=f"https://t.me/share/url?url={link}&text=Join%20VIP%20StakeBot!")],
-        [InlineKeyboardButton(text="🔙 Back", callback_data="menu")],
-    ])
-    await c.message.edit_text(
-        f"🎁 <b>Referral Program</b>\n\nEarn <b>100 credits</b> per friend!\n\n"
-        f"<code>{link}</code>\n\nTotal: <b>{u[5]}</b>", reply_markup=kb)
-    await c.answer()
+        [InlineKeyboardButton(text="🔙 Back", callback_data="menu")]])
+    await c.message.edit_text(f"🎁 <b>Referral</b>\n\nEarn <b>100 credits</b> per friend!\n\n<code>{link}</code>\n\nTotal: <b>{u[5]}</b>",
+                              reply_markup=kb); await c.answer()
 
 @dp.callback_query(F.data == "about")
 async def cb_about(c: CallbackQuery):
     await c.message.edit_text(
-        "ℹ️ <b>About VIP StakeBot</b>\n\n"
-        "A staking simulator on Telegram — no real money.\n"
-        "• 1,000 free starter credits\n"
-        "• 3 staking tiers\n"
-        "• Referral rewards\n"
-        "• 24/7 uptime", reply_markup=main_menu())
+        "ℹ️ <b>About VIP StakeBot</b>\n\nStaking simulator on Telegram — no real money.\n"
+        "• 1,000 free credits\n• 3 staking tiers\n• Referral rewards", reply_markup=main_menu())
     await c.answer()
 
 @dp.message(Command("help"))
 async def help_cmd(m: Message):
-    await m.answer("/start — Menu\n/balance — Credits\n/stake — Plans\n/help — This")
+    await m.answer("/start — Menu\n/balance — Credits\n/stake — Plans")
 
 @dp.message(Command("balance"))
 async def bal_cmd(m: Message):
@@ -217,31 +173,17 @@ async def bal_cmd(m: Message):
 async def stake_cmd(m: Message):
     await m.answer("📊 Choose a plan:", reply_markup=plans_kb())
 
-# ---------- STARTUP ----------
-async def on_startup(bot: Bot):
-    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+async def main():
+    init_db()
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await bot.set_my_commands([
         BotCommand(command="start", description="Main menu"),
         BotCommand(command="balance", description="Check credits"),
         BotCommand(command="stake", description="Staking plans"),
-        BotCommand(command="help", description="Help"),
-    ])
-    logging.info(f"Webhook set: {WEBHOOK_URL}")
-
-async def main():
-    init_db()
-    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp.startup.register(on_startup)
-
-    app = web.Application()
-    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    logging.info(f"Running on port {PORT}")
-    await asyncio.Event().wait()
+        BotCommand(command="help", description="Help")])
+    await bot.delete_webhook(drop_pending_updates=True)  # clean up old webhook
+    logging.info("Bot started (polling mode)")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
